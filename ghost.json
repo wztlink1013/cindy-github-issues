@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 3,
+  "minCindyVersion": "0.1.148",
+  "id": "cindy-github-issues",
+  "name": "GitHub Issues",
+  "description": "Manage issues across your GitHub repositories using your local GitHub CLI session.",
+  "version": "0.1.0",
+  "entry": "main.js",
+  "launch": "on-demand",
+  "mainView": {
+    "title": "GitHub Issues",
+    "icon": "code",
+    "html": "index.html"
+  },
+  "settingsHtml": "settings.html",
+  "githubRelease": "wztlink1013/cindy-github-issues",
+  "readme": {
+    "en": "README.md",
+    "zh-CN": "README.zh-CN.md"
+  },
+  "confirm": true,
+  "node": {
+    "entry": "node/worker.cjs",
+    "protocol": "json-rpc-stdio",
+    "lifecycle": "on-demand",
+    "idleTimeoutSeconds": 120
+  }
+}

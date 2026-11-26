@@ -1,0 +1,4 @@
+*.cindy
+node_modules/
+.env
+.env.*

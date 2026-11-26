@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GitHub Issues</title>
+  <link rel="stylesheet" href="ui.css">
+  <script src="ui.js" defer></script>
+</head>
+<body>
+<main>
+  <header class="top">
+    <div><p class="eyebrow" id="account">正在检查 GitHub CLI…</p><h1>GitHub Issues</h1></div>
+    <div class="actions">
+      <button id="refresh" type="button">重新检测</button>
+      <button id="choose" type="button" disabled>选择仓库</button>
+      <button id="create" type="button" class="primary" disabled>新建 Issue</button>
+    </div>
+  </header>
+  <p id="notice" class="notice" role="status" hidden></p>
+  <div id="workspace" class="workspace" hidden>
+    <section class="issue-list" aria-label="Issue 列表">
+      <div class="filters">
+        <input id="query" type="search" placeholder="搜索已加载的标题或 #编号" aria-label="搜索已加载的标题或编号">
+        <select id="repo-filter" aria-label="仓库"><option value="">全部仓库</option></select>
+        <select id="state-filter" aria-label="状态"><option value="open">打开</option><option value="closed">已关闭</option><option value="all">所有状态</option></select>
+        <input id="label-filter" type="search" placeholder="标签" aria-label="标签">
+        <input id="assignee-filter" type="search" placeholder="指派人" aria-label="指派人">
+      </div>
+      <p id="list-status" class="muted" role="status"></p>
+      <ul id="repo-errors" class="errors" hidden></ul>
+      <ul id="issues" class="results"></ul>
+      <button type="button" id="more-issues" hidden>加载更多 Issues</button>
+    </section>
+    <section id="detail" class="detail" aria-label="Issue 详情" tabindex="-1"></section>
+  </div>
+</main>
+<dialog id="chooser" aria-labelledby="chooser-heading">
+  <div class="dialog-head"><h2 id="chooser-heading">选择仓库</h2><button type="button" id="cancel-choice" aria-label="取消">关闭</button></div>
+  <input id="repo-query" type="search" placeholder="搜索 owner/repo" aria-label="搜索仓库" autofocus>
+  <p id="chooser-status" role="status" class="muted"></p>
+  <div id="repo-choices" class="repo-choices"></div>
+  <button id="retry-choices" type="button" hidden>重试加载仓库</button>
+  <div class="dialog-foot"><span id="selected-count" role="status"></span><button id="save-choice" class="primary" type="button">保存选择</button></div>
+</dialog>
+<dialog id="new-issue" aria-labelledby="create-heading">
+  <form id="new-form">
+    <div class="dialog-head"><h2 id="create-heading">新建 Issue</h2><button type="button" id="cancel-create">关闭</button></div>
+    <label>目标仓库<select name="repo" required></select></label>
+    <label>标题<input name="title" required maxlength="256"></label>
+    <label>正文（可选）<textarea name="body" rows="6" maxlength="50000"></textarea></label>
+    <p id="create-status" role="status" class="muted"></p>
+    <div class="dialog-foot"><button type="submit" class="primary">创建 Issue</button></div>
+  </form>
+</dialog>
+</body>
+</html>
