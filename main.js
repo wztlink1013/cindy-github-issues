@@ -2,7 +2,7 @@
 
 const channel = new BroadcastChannel('cindy-github-issues/v1');
 const pending = new Map();
-const reads = new Set(['account', 'repositories', 'issues', 'issue', 'comments']);
+const reads = new Set(['account', 'quota', 'repositories', 'issues', 'issue', 'comments']);
 const writes = new Set(['create', 'comment', 'state', 'addLabels', 'removeLabel', 'addAssignees', 'removeAssignees']);
 
 async function handle(action, args) {

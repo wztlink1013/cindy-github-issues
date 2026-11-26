@@ -4,7 +4,8 @@
   "id": "cindy-github-issues",
   "name": "GitHub Issues",
   "description": "Manage issues across your GitHub repositories using your local GitHub CLI session.",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "releaseNotes": "显示 GitHub REST API 剩余额度和重置时间。减少仓库列表重复加载和 Issue 写入后的全量刷新，遇到 GitHub 限流时暂停请求。",
   "entry": "main.js",
   "launch": "on-demand",
   "mainView": {

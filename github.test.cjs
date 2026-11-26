@@ -33,6 +33,7 @@ test('repository pagination includes organization and individual repositories an
   assert.equal(list.hasNext, true);
   assert.equal(new URL(requests[1].path, 'https://api.github.com').searchParams.get('affiliation'), 'owner,collaborator,organization_member');
   assert.match(requests[1].path, /page=2/);
+  assert.match(requests[1].path, /per_page=100/);
 });
 
 test('issue list drops pull requests and keeps pagination even for a PR-only page', async () => {
@@ -126,4 +127,74 @@ test('write timeout is uncertain and is not retried', async () => {
   const makeRequest = createApi(async () => { attempts++; throw new GitHubError('TIMEOUT', 'timeout'); });
   await assert.rejects(makeRequest('/example', 'POST', { title: 'test' }), { code: 'WRITE_UNCERTAIN' });
   assert.equal(attempts, 1);
+});
+
+function http(status, body, headers = {}) {
+  const lines = Object.entries(headers).map(([name, value]) => name + ': ' + value);
+  return { code: status >= 400 ? 1 : 0,
+    stdout: ['HTTP/2 ' + status, ...lines, '', JSON.stringify(body)].join('\n') };
+}
+
+test('ordinary core headers populate quota, other resources do not override it, and explicit refresh reads core', async () => {
+  const now = 1700000000000;
+  const reset = now / 1000 + 360;
+  const responses = [
+    http(200, { id: 42, login: 'octo' }, { 'X-RateLimit-Resource': 'core', 'X-RateLimit-Limit': 5000, 'X-RateLimit-Remaining': 17, 'X-RateLimit-Reset': reset }),
+    http(200, [], { 'X-RateLimit-Resource': 'search', 'X-RateLimit-Limit': 30, 'X-RateLimit-Remaining': 3, 'X-RateLimit-Reset': reset }),
+    http(200, { id: 42, login: 'octo' }),
+    http(200, { resources: { core: { limit: 5000, remaining: 13, reset } } }),
+  ];
+  const calls = [];
+  const api = createApi(async argv => { calls.push(argv.at(-1)); return responses.shift(); }, () => now);
+  const service = createService(api);
+  await service('account');
+  assert.equal(api.quotaSnapshot().accountId, 42);
+  assert.deepEqual(api.quotaSnapshot().core, { limit: 5000, remaining: 17, reset: reset * 1000, observedAt: now });
+  await api('/search/issues');
+  assert.equal(api.quotaSnapshot().core.remaining, 17);
+  await service('quota', { accountId: 42 });
+  assert.equal(api.quotaSnapshot().core.remaining, 13);
+  assert.deepEqual(calls, ['/user', '/search/issues', '/user', '/rate_limit']);
+});
+
+test('secondary limits pause requests including writes until Retry-After, then allow the next explicit request', async () => {
+  let now = 1700000000000;
+  let calls = 0;
+  const api = createApi(async () => ++calls === 1
+    ? http(403, { message: 'You have exceeded a secondary rate limit' }, { 'Retry-After': 45 })
+    : http(200, []), () => now);
+  await assert.rejects(api('/repos/octo/demo/issues'), { code: 'RATE_LIMIT' });
+  assert.deepEqual(api.quotaSnapshot().cooldown, { kind: 'secondary', until: now + 45000 });
+  await assert.rejects(api('/repos/octo/demo/issues', 'POST', {}), { code: 'RATE_LIMIT' });
+  assert.equal(calls, 1);
+  now += 45001;
+  await api('/repos/octo/demo/issues');
+  assert.equal(calls, 2);
+  assert.equal(api.quotaSnapshot().cooldown, null);
+});
+
+test('last successful core request exhausts quota without replaying the following request', async () => {
+  let now = 1700000000000;
+  let calls = 0;
+  const reset = now / 1000 + 90;
+  const api = createApi(async () => ++calls === 1
+    ? http(200, [], { 'X-RateLimit-Resource': 'core', 'X-RateLimit-Remaining': 0, 'X-RateLimit-Limit': 5000, 'X-RateLimit-Reset': reset })
+    : http(200, []), () => now);
+  await api('/repos/octo/demo/issues');
+  assert.deepEqual(api.quotaSnapshot().cooldown, { kind: 'primary', until: reset * 1000 });
+  await assert.rejects(api('/repos/octo/demo/issues'), { code: 'RATE_LIMIT' });
+  assert.equal(calls, 1);
+  now = reset * 1000 + 1;
+  await api('/repos/octo/demo/issues');
+  assert.equal(calls, 2);
+});
+
+test('concurrent account reads share a request, while a subsequent check detects a switched account', async () => {
+  const { service, switchAccount, requests } = fixture(() => assert.fail('unexpected repository request'));
+  const [a, b] = await Promise.all([service('account'), service('account')]);
+  assert.equal(a.id, b.id);
+  assert.equal(requests.length, 1);
+  switchAccount();
+  assert.equal((await service('account')).id, 99);
+  assert.equal(requests.length, 2);
 });

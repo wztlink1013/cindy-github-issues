@@ -1,14 +1,15 @@
 'use strict';
 
 const { createInterface } = require('node:readline');
-const { createService, GitHubError } = require('./github.cjs');
+const { createApi, createService, GitHubError } = require('./github.cjs');
 
-const dispatch = createService();
-const ACTIONS = new Set(['account', 'repositories', 'issues', 'issue', 'comments', 'create',
+const api = createApi();
+const dispatch = createService(api);
+const ACTIONS = new Set(['account', 'quota', 'repositories', 'issues', 'issue', 'comments', 'create',
   'comment', 'state', 'addLabels', 'removeLabel', 'addAssignees', 'removeAssignees']);
 
 function reply(id, result) {
-  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\n');
+  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result: { ...result, quota: api.quotaSnapshot() } }) + '\n');
 }
 
 createInterface({ input: process.stdin }).on('line', async line => {

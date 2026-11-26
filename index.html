@@ -17,6 +17,13 @@
       <button id="create" type="button" class="primary" disabled>新建 Issue</button>
     </div>
   </header>
+  <section id="quota" class="quota" aria-label="GitHub API 额度">
+    <div>
+      <p id="quota-count" class="quota-count">GitHub API 额度 · 等待检测</p>
+      <p id="quota-detail" class="muted" role="status"></p>
+    </div>
+    <button id="quota-refresh" type="button" disabled>刷新额度</button>
+  </section>
   <p id="notice" class="notice" role="status" hidden></p>
   <div id="workspace" class="workspace" hidden>
     <section class="issue-list" aria-label="Issue 列表">
@@ -41,6 +48,7 @@
   <p id="chooser-status" role="status" class="muted"></p>
   <div id="repo-choices" class="repo-choices"></div>
   <button id="retry-choices" type="button" hidden>重试加载仓库</button>
+  <button id="refresh-choices" type="button" hidden>刷新仓库列表</button>
   <div class="dialog-foot"><span id="selected-count" role="status"></span><button id="save-choice" class="primary" type="button">保存选择</button></div>
 </dialog>
 <dialog id="new-issue" aria-labelledby="create-heading">

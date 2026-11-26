@@ -71,15 +71,42 @@ function decodeResponse(stdout) {
   return { status, headers, body: normalized.slice(end + 2) };
 }
 
+function integer(value, minimum = 0) {
+  if (typeof value === 'string' && /^\d+$/.test(value)) value = Number(value);
+  return Number.isSafeInteger(value) && value >= minimum ? value : null;
+}
+
+function coreQuota(limit, remaining, reset, now) {
+  limit = integer(limit, 1);
+  remaining = integer(remaining);
+  reset = integer(reset, 1);
+  return limit !== null && remaining !== null && remaining <= limit && reset !== null && reset <= 8640000000000
+    ? { limit, remaining, reset: reset * 1000, observedAt: now }
+    : null;
+}
+
+function rateLimit(status, headers, body, now) {
+  if (status !== 403 && status !== 429) return null;
+  const primary = headers.get('x-ratelimit-remaining') === '0';
+  const retry = headers.get('retry-after');
+  const message = typeof body?.message === 'string' ? body.message : '';
+  if (status === 403 && headers.has('x-github-sso')) return null;
+  if (!primary && status !== 429 && !retry && !/secondary rate limit|abuse detection/i.test(message)) return null;
+  const seconds = integer(retry, 1);
+  const retryAt = seconds === null ? Date.parse(retry || '') : now + seconds * 1000;
+  const reset = integer(headers.get('x-ratelimit-reset'), 1);
+  const candidates = [retryAt, primary && reset !== null ? reset * 1000 : 0].filter(value => value > now);
+  return { kind: primary ? 'primary' : 'secondary', until: candidates.length ? Math.max(...candidates) : now + 60000 };
+}
+
+function cooldownError(cooldown, now) {
+  const seconds = Math.max(1, Math.ceil((cooldown.until - now) / 1000));
+  const label = cooldown.kind === 'primary' ? 'GitHub API 额度已用完' : 'GitHub 暂时限制请求频率';
+  return new GitHubError('RATE_LIMIT', label + '，请在约 ' + seconds + ' 秒后重试。');
+}
+
 function responseError(status, headers) {
   if (status === 401) return new GitHubError('AUTH', 'GitHub 登录已失效。请运行 gh auth login --hostname github.com。');
-  if (status === 429 || (status === 403 && (headers.get('x-ratelimit-remaining') === '0' || headers.has('retry-after')))) {
-    const retryAfter = Number(headers.get('retry-after'));
-    const reset = Number(headers.get('x-ratelimit-reset'));
-    const minutes = Math.ceil((retryAfter > 0 ? retryAfter : reset - Date.now() / 1000) / 60);
-    const advice = minutes > 0 ? '约 ' + minutes + ' 分钟后重试。' : '请稍后重试。';
-    return new GitHubError('RATE_LIMIT', 'GitHub 请求已达限额，' + advice);
-  }
   if (status === 403) {
     return new GitHubError('FORBIDDEN', headers.has('x-github-sso')
       ? '组织要求为当前 GitHub CLI 登录授权 SSO。请在 GitHub 上完成组织授权后再试。'
@@ -90,8 +117,16 @@ function responseError(status, headers) {
   return new GitHubError('GITHUB_ERROR', 'GitHub 请求失败（HTTP ' + status + '）。');
 }
 
-function createApi(execute = runGh) {
-  return async function api(path, method = 'GET', input) {
+function createApi(execute = runGh, clock = Date.now) {
+  let quota = null;
+  let cooldown = null;
+  let accountId = null;
+  let accountEpoch = 0;
+
+  async function api(path, method = 'GET', input) {
+    const start = clock();
+    const epoch = accountEpoch;
+    if (cooldown?.until > start) throw cooldownError(cooldown, start);
     const args = ['api', '--hostname', 'github.com', '--method', method, '--include',
       '-H', 'Accept: application/vnd.github+json', '-H', 'X-GitHub-Api-Version: 2022-11-28', path];
     if (input !== undefined) args.push('--input', '-');
@@ -103,13 +138,40 @@ function createApi(execute = runGh) {
       throw error;
     }
     const { status, headers, body } = decodeResponse(execution.stdout);
+    const now = clock();
+    let data;
+    let validBody = true;
+    try { data = body.trim() ? JSON.parse(body) : null; } catch { validBody = false; }
+
+    if (path === '/user' && status === 200 && Number.isSafeInteger(data?.id) && data.id > 0 && data.id !== accountId) {
+      accountId = data.id;
+      accountEpoch++;
+      quota = null;
+      cooldown = null;
+    }
+
+    const limit = rateLimit(status, headers, data, now);
+    if (epoch === accountEpoch || path === '/user') {
+      const core = path === '/rate_limit' && status === 200 ? data?.resources?.core : null;
+      const reading = core ? coreQuota(core.limit, core.remaining, core.reset, now)
+        : headers.get('x-ratelimit-resource') === 'core' ? coreQuota(headers.get('x-ratelimit-limit'),
+          headers.get('x-ratelimit-remaining'), headers.get('x-ratelimit-reset'), now) : null;
+      if (reading && (!quota || reading.reset >= quota.reset)) {
+        if (quota?.reset === reading.reset && !core) reading.remaining = Math.min(quota.remaining, reading.remaining);
+        quota = reading;
+      }
+      if (limit && (!cooldown || limit.until > cooldown.until)) cooldown = limit;
+      if (reading?.remaining === 0 && reading.reset > now && (!cooldown || reading.reset > cooldown.until)) {
+        cooldown = { kind: 'primary', until: reading.reset };
+      }
+    }
+    if (limit) throw cooldownError(limit, now);
     if (status >= 200 && status < 300) {
-      try {
-        return { data: body.trim() ? JSON.parse(body) : null, headers };
-      } catch {
+      if (!validBody) {
         if (method !== 'GET') throw uncertainWrite();
         throw new GitHubError('RESPONSE', 'GitHub 返回了无法读取的响应。');
       }
+      return { data, headers };
     }
     if (status) {
       if (method !== 'GET' && status >= 500) throw uncertainWrite();
@@ -118,16 +180,19 @@ function createApi(execute = runGh) {
     if (execution.code === 4) throw new GitHubError('AUTH', '请运行 gh auth login --hostname github.com，再点击「重新检测」。');
     if (method !== 'GET') throw uncertainWrite();
     throw new GitHubError('NETWORK', '无法连接 GitHub，请检查网络和 gh auth status --hostname github.com。');
-  };
+  }
+
+  api.quotaSnapshot = () => ({ accountId, core: quota, cooldown: cooldown?.until > clock() ? cooldown : null });
+  return api;
 }
 
 function uncertainWrite() {
   return new GitHubError('WRITE_UNCERTAIN', '无法确认 GitHub 是否已保存。请先到 GitHub 核对结果，再决定是否重试。');
 }
 
-function pagePath(path, page, params = {}) {
+function pagePath(path, page, params = {}, perPage = PAGE_SIZE) {
   rejectUnless(Number.isSafeInteger(page) && page >= 1 && page <= 100000);
-  return path + '?' + new URLSearchParams({ ...params, per_page: PAGE_SIZE, page }).toString();
+  return path + '?' + new URLSearchParams({ ...params, per_page: perPage, page }).toString();
 }
 
 function pageResult(response, map, filter = () => true) {
@@ -186,25 +251,41 @@ function listText(value, max, pattern) {
 }
 
 function createService(api = createApi()) {
-  async function activeAccount() {
+  let pendingAccount = null;
+
+  async function fetchAccount() {
     const result = await api('/user');
     const { id, login } = result.data || {};
     if (!Number.isSafeInteger(id) || id <= 0 || !OWNER.test(login || '')) throw new GitHubError('RESPONSE', '无法确认当前 GitHub 账号。');
     return { id, login };
   }
 
-  async function assertAccount(expected) {
+  function activeAccount() {
+    if (!pendingAccount) {
+      pendingAccount = fetchAccount().finally(() => { pendingAccount = null; });
+    }
+    return pendingAccount;
+  }
+
+  async function assertAccount(expected, fresh = false) {
     rejectUnless(Number.isSafeInteger(expected) && expected > 0);
-    if ((await activeAccount()).id !== expected) throw new GitHubError('ACCOUNT_CHANGED', '本机 GitHub CLI 账号已切换，请重新检测后再操作。');
+    if ((await (fresh ? fetchAccount() : activeAccount())).id !== expected) {
+      throw new GitHubError('ACCOUNT_CHANGED', '本机 GitHub CLI 账号已切换，请重新检测后再操作。');
+    }
   }
 
   return async function dispatch(action, args = {}) {
     if (action === 'account') return activeAccount();
+    if (action === 'quota') {
+      await assertAccount(args.accountId);
+      await api('/rate_limit');
+      return null;
+    }
     if (action === 'repositories') {
       await assertAccount(args.accountId);
       const result = await api(pagePath('/user/repos', args.page, {
         visibility: 'all', affiliation: 'owner,collaborator,organization_member', sort: 'full_name', direction: 'asc',
-      }));
+      }, 100));
       await assertAccount(args.accountId);
       return pageResult(result, repository, item => {
         const pieces = String(item?.full_name || '').split('/');
@@ -221,7 +302,7 @@ function createService(api = createApi()) {
     if (action === 'create') {
       const title = bodyText(args.title, 256).trim();
       const body = bodyText(args.body, 50000, true);
-      await assertAccount(args.accountId);
+      await assertAccount(args.accountId, true);
       return issue((await api(base, 'POST', { title, body })).data, true);
     }
     rejectUnless(Number.isSafeInteger(args.number) && args.number >= 1);
@@ -238,10 +319,10 @@ function createService(api = createApi()) {
     await assertAccount(args.accountId);
     const current = await getIssue();
     // The account may change while a confirmation dialog or the issue read is pending.
-    await assertAccount(args.accountId);
+    await assertAccount(args.accountId, true);
     if (action === 'comment') {
       const body = bodyText(args.body, 50000);
-      return { id: (await api(target + '/comments', 'POST', { body })).data?.id };
+      return comment((await api(target + '/comments', 'POST', { body })).data || {});
     }
     if (action === 'state') {
       rejectUnless(['open', 'closed'].includes(args.state));

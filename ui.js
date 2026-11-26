@@ -6,10 +6,60 @@ const calls = new Map();
 const mutations = new Set(['create', 'comment', 'state', 'addLabels', 'removeLabel', 'addAssignees', 'removeAssignees']);
 const roles = { admin: '管理员', maintain: '维护', push: '写入', triage: '分流', pull: '读取', unknown: '角色未知' };
 const repoPattern = /^[a-z0-9][a-z0-9-]{0,38}\/[a-z0-9._-]{1,100}$/i;
+const REPO_CACHE_MS = 5 * 60 * 1000;
+const FOCUS_CHECK_MS = 60 * 1000;
 const key = value => value.toLowerCase();
 const stateName = value => value === 'open' ? '打开' : '已关闭';
-const time = value => value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : '';
+const time = value => value && Number.isFinite(new Date(value).getTime()) ? new Date(value).toLocaleString() : '';
 const current = { account: null, selected: new Map(), issuePages: new Map(), detail: null, generation: 0, listGeneration: 0, selection: null, reading: false, writing: false };
+let repoCache = null;
+let quotaSnapshot = null;
+let quotaBusy = false;
+let quotaTimer;
+let lastAccountCheck = 0;
+
+function renderQuota() {
+  const now = Date.now();
+  const core = quotaSnapshot?.core;
+  const cooldown = quotaSnapshot?.cooldown?.until > now ? quotaSnapshot.cooldown : null;
+  const low = Boolean(core && core.reset > now && core.remaining <= Math.max(10, core.limit * 0.05));
+  $('quota').dataset.low = String(low || Boolean(cooldown));
+  $('quota-count').textContent = core ? 'GitHub REST API 剩余 ' + core.remaining.toLocaleString() + ' / ' + core.limit.toLocaleString()
+    : 'GitHub REST API 额度 · 暂无数据';
+  const details = [];
+  if (core) {
+    details.push((core.reset <= now ? '上次额度周期已结束，刷新可查看新额度' : '重置于 ' + time(core.reset)) + ' · 更新于 ' + time(core.observedAt));
+  }
+  if (cooldown) details.push((cooldown.kind === 'primary' ? '额度已用完' : '请求频率受限') + '，请在 ' + time(cooldown.until) + ' 后重试');
+  else if (low) details.push('剩余额度偏低');
+  $('quota-detail').textContent = details.join('。');
+  $('quota-refresh').disabled = !current.account || quotaBusy || Boolean(cooldown);
+  clearTimeout(quotaTimer);
+  const nextChange = Math.min(cooldown?.until ?? Infinity, core?.reset > now ? core.reset : Infinity);
+  if (Number.isFinite(nextChange)) quotaTimer = setTimeout(renderQuota, Math.min(nextChange - now + 50, 2147483647));
+}
+
+function receiveQuota(snapshot, accountId) {
+  if (!snapshot || (snapshot.accountId != null && snapshot.accountId !== accountId)) return;
+  if (snapshot.core || snapshot.cooldown || quotaSnapshot) {
+    quotaSnapshot = { ...snapshot, core: snapshot.core || quotaSnapshot?.core };
+    renderQuota();
+  }
+}
+
+async function refreshQuota() {
+  if (!current.account || quotaBusy) return;
+  quotaBusy = true;
+  renderQuota();
+  try {
+    await rpc('quota', { accountId: current.account.id });
+  } catch (error) {
+    if (!handleAccountChange(error)) notice(error.message);
+  } finally {
+    quotaBusy = false;
+    renderQuota();
+  }
+}
 
 function make(tag, text, className) {
   const element = document.createElement(tag);
@@ -46,12 +96,27 @@ channel.onmessage = ({ data }) => {
   if (data.type === 'ack') clearInterval(call.retry);
   if (data.type === 'result') {
     call.close();
-    if (data.result?.ok === true) call.resolve(data.result.data);
-    else call.reject(rpcError(data.result?.code, data.result?.message || '请求失败。'));
+    if (call.generation === current.generation && call.action !== 'account' && current.account) {
+      receiveQuota(data.result?.quota, current.account.id);
+    }
+    if (call.action === 'account' && call.generation === current.generation && current.account && data.result?.data?.id === current.account.id) {
+      receiveQuota(data.result?.quota, current.account.id);
+    }
+    if (data.result?.ok === true) {
+      if (call.action === 'account') lastAccountCheck = Date.now();
+      call.resolve(call.includeQuota ? { ...data.result.data, quota: data.result.quota } : data.result.data);
+    } else {
+      const error = rpcError(data.result?.code, data.result?.message || '请求失败。');
+      error.quota = data.result?.quota;
+      call.reject(error);
+    }
   }
 };
 
 async function rpc(action, args = {}) {
+  const blockedUntil = quotaSnapshot?.cooldown?.until;
+  if (blockedUntil > Date.now()) throw rpcError('RATE_LIMIT', 'GitHub 当前限流，请在 ' + time(blockedUntil) + ' 后重试。');
+  const generation = current.generation;
   let wake;
   try { wake = await fetch('/wake'); } catch { /* handled below */ }
   if (!wake?.ok) throw rpcError('BRIDGE', '无法唤醒插件，请重新检测。');
@@ -70,7 +135,7 @@ async function rpc(action, args = {}) {
       clearTimeout(timeout);
       calls.delete(id);
     }
-    calls.set(id, { resolve, reject, retry, close });
+    calls.set(id, { action, generation, includeQuota: args.includeQuota === true, resolve, reject, retry, close });
     channel.postMessage(message);
   });
 }
@@ -92,9 +157,14 @@ function updateControls() {
   $('workspace').hidden = !current.account;
   $('create').disabled = current.writing || ![...current.selected.values()].some(repo => !repo.archived && repo.issues);
   $('refresh').disabled = current.writing;
+  renderQuota();
 }
 
 async function detect() {
+  if (quotaSnapshot?.cooldown?.until > Date.now()) {
+    notice('GitHub 当前限流，请在 ' + time(quotaSnapshot.cooldown.until) + ' 后重新检测。');
+    return;
+  }
   const generation = ++current.generation;
   ++current.listGeneration;
   current.account = null;
@@ -103,6 +173,7 @@ async function detect() {
   current.detail = null;
   current.reading = false;
   current.selection = null;
+  quotaSnapshot = null;
   if ($('chooser').open) $('chooser').close();
   if ($('new-issue').open) $('new-issue').close();
   $('account').textContent = '正在检查 GitHub CLI…';
@@ -110,10 +181,12 @@ async function detect() {
   $('refresh').disabled = true;
   notice();
   try {
-    const account = await rpc('account');
+    const account = await rpc('account', { includeQuota: true });
     const config = await readSettings();
     if (generation !== current.generation) return;
     current.account = account;
+    if (repoCache?.accountId !== account.id) repoCache = null;
+    receiveQuota(account.quota, account.id);
     for (const id of ['query', 'label-filter', 'assignee-filter']) $(id).value = '';
     $('state-filter').value = 'open';
     $('repo-filter').value = '';
@@ -125,6 +198,7 @@ async function detect() {
   } catch (error) {
     if (generation !== current.generation) return;
     $('account').textContent = 'GitHub CLI 未连接';
+    if (error.code === 'RATE_LIMIT' && error.quota?.cooldown) receiveQuota(error.quota, error.quota.accountId);
     notice(error.message);
   } finally {
     if (generation === current.generation) updateControls();
@@ -146,12 +220,22 @@ function renderRepoFilter() {
 
 function openChooser() {
   if (!current.account || current.writing) return;
-  const selection = { account: current.account, observed: new Map(), original: new Map(current.selected),
-    draft: new Map(current.selected), page: 1, status: 'loading', error: '', saving: false };
+  const cached = repoCache?.accountId === current.account.id && Date.now() - repoCache.loadedAt < REPO_CACHE_MS ? repoCache : null;
+  const selection = { account: current.account, observed: new Map(cached?.items), original: new Map(current.selected),
+    draft: new Map(current.selected), page: 1, status: cached ? 'done' : 'idle', error: '', saving: false, cached: Boolean(cached) };
+  for (const [id, repo] of selection.observed) if (selection.draft.has(id)) selection.draft.set(id, repo);
   current.selection = selection;
   $('repo-query').value = '';
   $('chooser').showModal();
   renderChooser();
+  if (!cached) void listRepositories(selection);
+}
+
+function refreshRepositories() {
+  const selection = current.selection;
+  if (!selection || selection.saving || selection.status === 'loading') return;
+  repoCache = null;
+  Object.assign(selection, { observed: new Map(), page: 1, cached: false });
   void listRepositories(selection);
 }
 
@@ -203,23 +287,26 @@ function renderChooser() {
   container.scrollTop = scrollTop;
   if (focused) [...container.querySelectorAll('input')].find(el => el.dataset.repo === focused)?.focus({ preventScroll: true });
   const loaded = '已读取 ' + selection.observed.size + ' 个仓库';
-  $('chooser-status').textContent = selection.error || (selection.status === 'loading' ? loaded + '，正在读取下一页…' : loaded + (sets.length ? '。' : '，没有匹配的结果。'));
+  $('chooser-status').textContent = selection.error || (selection.status === 'loading' ? loaded + '，正在读取下一页…'
+    : loaded + (selection.cached ? '（近期缓存）' : '') + (sets.length ? '。' : '，没有匹配的结果。'));
   $('retry-choices').hidden = selection.status !== 'error';
   $('retry-choices').disabled = selection.saving;
+  $('refresh-choices').hidden = selection.status !== 'done';
+  $('refresh-choices').disabled = selection.saving;
   $('save-choice').disabled = selection.saving;
   $('cancel-choice').disabled = selection.saving;
   $('selected-count').textContent = '已选 ' + selection.draft.size + ' 个仓库';
 }
 
 async function listRepositories(selection) {
-  if (selection !== current.selection) return;
+  if (!selection || selection !== current.selection || selection.status === 'loading') return;
   selection.status = 'loading';
   selection.error = '';
   renderChooser();
   try {
     while (selection === current.selection && !selection.saving) {
       const page = await rpc('repositories', { accountId: selection.account.id, page: selection.page });
-      if (selection !== current.selection) return;
+      if (selection !== current.selection || selection.saving) return;
       for (const repo of page.items) {
         const id = key(repo.name);
         selection.observed.set(id, repo);
@@ -228,6 +315,7 @@ async function listRepositories(selection) {
       selection.page++;
       if (!page.hasNext) {
         selection.status = 'done';
+        repoCache = { accountId: selection.account.id, items: new Map(selection.observed), loadedAt: Date.now() };
         break;
       }
       renderChooser();
@@ -237,6 +325,7 @@ async function listRepositories(selection) {
     selection.status = 'error';
     selection.error = error.message;
   }
+  if (selection.status === 'loading') selection.status = 'idle';
   if (selection === current.selection) renderChooser();
 }
 
@@ -266,7 +355,10 @@ async function saveChoice() {
     selection.error = error.message;
   } finally {
     selection.saving = false;
-    if (selection === current.selection) renderChooser();
+    if (selection === current.selection) {
+      renderChooser();
+      if (selection.status === 'idle') void listRepositories(selection);
+    }
   }
 }
 
@@ -277,7 +369,7 @@ async function reloadIssues() {
   const filter = $('repo-filter').value;
   for (const repo of current.selected.values()) {
     if (filter && key(repo.name) !== key(filter)) continue;
-    current.issuePages.set(repo.name, { list: [], page: 1, hasNext: true, error: '' });
+    current.issuePages.set(repo.name, { list: [], page: 1, hasNext: true, error: '', duringRead: null });
   }
   await readIssuePages(false);
 }
@@ -297,20 +389,26 @@ async function readIssuePages(retry) {
     async function readNext() {
       while (generation === current.listGeneration && index < entries.length) {
         const [repo, data] = entries[index++];
+        data.duringRead = new Map();
         try {
           const result = await rpc('issues', { repo, page: data.page, state: status });
           if (generation !== current.listGeneration) return;
           const merged = new Map(data.list.map(issue => [issue.number, issue]));
           for (const issue of result.items) merged.set(issue.number, { ...issue, repo });
-          Object.assign(data, { list: [...merged.values()], page: data.page + 1, hasNext: result.hasNext, error: '' });
+          for (const issue of data.duringRead.values()) mergeIssue(merged, issue, status);
+          const changed = data.duringRead.size > 0;
+          Object.assign(data, { list: [...merged.values()], page: changed ? 1 : data.page + 1, hasNext: changed || result.hasNext, error: '' });
         } catch (error) {
           data.error = error.message;
+          if (error.code === 'RATE_LIMIT') index = entries.length;
+        } finally {
+          data.duringRead = null;
         }
         if (generation === current.listGeneration) renderIssues();
       }
     }
-    await Promise.all(Array.from({ length: Math.min(4, entries.length) }, readNext));
-    if (generation === current.listGeneration && (await rpc('account')).id !== account.id) throw rpcError('ACCOUNT_CHANGED', '账号已切换。');
+    await Promise.all(Array.from({ length: Math.min(2, entries.length) }, readNext));
+    if (generation === current.listGeneration && !(quotaSnapshot?.cooldown?.until > Date.now()) && (await rpc('account')).id !== account.id) throw rpcError('ACCOUNT_CHANGED', '账号已切换。');
   } catch (error) {
     if (generation === current.listGeneration && !handleAccountChange(error)) notice(error.message);
   } finally {
@@ -319,6 +417,24 @@ async function readIssuePages(retry) {
       renderIssues();
     }
   }
+}
+
+function mergeIssue(issues, issue, state) {
+  if (state === 'all' || issue.state === state) issues.set(issue.number, issue);
+  else issues.delete(issue.number);
+}
+
+function updateIssueRow(repo, issue) {
+  const page = current.issuePages.get(repo);
+  if (!page) return;
+  const { body, locked, warning, ...summary } = issue;
+  const item = { ...summary, repo };
+  const issues = new Map(page.list.map(row => [row.number, row]));
+  mergeIssue(issues, item, $('state-filter').value);
+  page.list = [...issues.values()];
+  if (page.duringRead) page.duringRead.set(item.number, item);
+  else if (page.hasNext) page.page = 1;
+  renderIssues();
 }
 
 function renderIssues() {
@@ -362,9 +478,9 @@ function githubLink(repo, number) {
   return a;
 }
 
-async function openIssue(repo, number, focus = false) {
+async function openIssue(repo, number, focus = false, knownIssue = null) {
   if (current.writing || !current.account) return;
-  const detail = { repo, number, accountId: current.account.id, loading: true, comments: [], commentPage: 1, commentNext: true, draft: '' };
+  const detail = { repo, number, accountId: current.account.id, loading: !knownIssue, issue: knownIssue, comments: [], commentPage: 1, commentNext: true, draft: '' };
   current.detail = detail;
   renderIssues();
   renderDetail();
@@ -372,6 +488,7 @@ async function openIssue(repo, number, focus = false) {
     $('detail').focus({ preventScroll: true });
     if (matchMedia('(max-width: 720px)').matches) $('detail').scrollIntoView({ block: 'start' });
   }
+  if (knownIssue) return;
   try {
     if ((await rpc('account')).id !== detail.accountId) throw rpcError('ACCOUNT_CHANGED', '账号已切换。');
     const issue = await rpc('issue', { repo, number });
@@ -396,7 +513,7 @@ async function loadComments(detail) {
     const data = await rpc('comments', { accountId: detail.accountId, repo: detail.repo, number: detail.number, page: detail.commentPage });
     const merged = new Map(detail.comments.map(item => [item.id, item]));
     for (const item of data.items) merged.set(item.id, item);
-    detail.comments = [...merged.values()];
+    detail.comments = [...merged.values()].sort((a, b) => a.id - b.id);
     detail.commentPage++;
     detail.commentNext = data.hasNext;
   } catch (error) {
@@ -514,23 +631,18 @@ async function edit(detail, action, fields) {
   detail.status = '正在处理 ' + detail.repo + ' #' + detail.number + '…';
   renderDetail();
   updateControls();
-  let refreshComments = false;
-  let updateList = false;
   try {
     const args = { repo: detail.repo, number: detail.number, accountId: detail.accountId };
     const saved = await rpc(action, { ...args, ...fields });
     detail.status = saved?.warning || '已保存到 GitHub。';
     if (action === 'comment') {
       detail.draft = '';
-      try {
-        detail.issue = await rpc('issue', args);
-        detail.comments = [];
-        detail.commentPage = 1;
-        detail.commentNext = true;
-        refreshComments = true;
-      } catch { detail.status = '评论已发送。请刷新详情查看。'; }
+      if (saved.id && !detail.comments.some(item => item.id === saved.id)) {
+        detail.comments.push(saved);
+        detail.issue = { ...detail.issue, comments: detail.issue.comments + 1 };
+      } else if (!saved.id) detail.status = '评论已发送。请刷新详情查看。';
     } else detail.issue = saved;
-    updateList = true;
+    if (detail === current.detail) updateIssueRow(detail.repo, detail.issue);
   } catch (error) {
     if (!handleAccountChange(error)) detail.status = error.message;
   } finally {
@@ -538,8 +650,6 @@ async function edit(detail, action, fields) {
     updateControls();
     if (detail === current.detail) renderDetail();
   }
-  if (detail === current.detail && refreshComments) void loadComments(detail);
-  if (detail === current.detail && updateList) void reloadIssues();
 }
 
 function openCreate() {
@@ -577,13 +687,14 @@ async function createIssue(event) {
   }
   if (issue) {
     notice('已创建 ' + repo + ' #' + issue.number + '。');
-    void reloadIssues();
-    void openIssue(repo, issue.number, true);
+    updateIssueRow(repo, issue);
+    void openIssue(repo, issue.number, true, issue);
   }
 }
 
 $('choose').onclick = openChooser;
 $('refresh').onclick = () => void detect();
+$('quota-refresh').onclick = () => void refreshQuota();
 $('create').onclick = openCreate;
 $('new-form').onsubmit = createIssue;
 $('cancel-create').onclick = () => $('new-issue').close();
@@ -593,14 +704,14 @@ $('chooser').oncancel = event => { if (current.selection?.saving) event.preventD
 $('chooser').onclose = () => { if (!$('chooser').open) current.selection = null; };
 $('save-choice').onclick = () => void saveChoice();
 $('retry-choices').onclick = () => void listRepositories(current.selection);
+$('refresh-choices').onclick = refreshRepositories;
 $('repo-query').oninput = renderChooser;
 $('more-issues').onclick = () => void readIssuePages(true);
 for (const id of ['query', 'label-filter', 'assignee-filter']) $(id).oninput = renderIssues;
 for (const id of ['repo-filter', 'state-filter']) $(id).onchange = () => void reloadIssues();
-let lastAccountCheck = 0;
 window.addEventListener('focus', () => {
   const account = current.account;
-  if (!account || current.writing || Date.now() - lastAccountCheck < 1500) return;
+  if (!account || current.writing || quotaSnapshot?.cooldown?.until > Date.now() || Date.now() - lastAccountCheck < FOCUS_CHECK_MS) return;
   lastAccountCheck = Date.now();
   void rpc('account').then(fresh => {
     if (account === current.account && fresh.id !== account.id) void detect();
