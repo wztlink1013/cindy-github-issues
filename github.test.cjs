@@ -41,15 +41,34 @@ test('issue list drops pull requests and keeps pagination even for a PR-only pag
   assert.deepEqual(await service('issues', { repo, page: 1, state: 'open' }), { items: [], hasNext: true });
 });
 
+test('repository labels page independently and a selected label filters the issue query', async () => {
+  const { service, requests } = fixture(path => path.startsWith('/repos/octo/demo/labels')
+    ? wrap([{ name: 'outside first issue page', color: '32a791' }], true) : wrap([]));
+  assert.deepEqual(await service('labels', { repo, accountId: 42, page: 2 }), {
+    items: [{ name: 'outside first issue page', color: '32a791' }], hasNext: true,
+  });
+  await service('issues', { repo, page: 1, state: 'closed', label: 'outside first issue page' });
+  await service('issues', { repo, page: 2, state: 'all', label: 'name, with comma' });
+  const [catalog, filtered, comma] = requests.filter(request => request.path !== '/user')
+    .map(request => new URL(request.path, 'https://api.github.com'));
+  assert.equal(catalog.pathname, '/repos/octo/demo/labels');
+  assert.equal(catalog.searchParams.get('page'), '2');
+  assert.equal(catalog.searchParams.get('per_page'), '100');
+  assert.equal(filtered.searchParams.get('labels'), 'outside first issue page');
+  assert.equal(filtered.searchParams.get('state'), 'closed');
+  assert.equal(comma.searchParams.has('labels'), false);
+});
+
 test('a failure for one repository leaves other repositories usable', async () => {
   const { service } = fixture(path => {
     if (path.startsWith('/repos/blocked/')) throw new GitHubError('FORBIDDEN', 'Blocked');
-    return wrap([apiIssue]);
+    return wrap([{ ...apiIssue, labels: [{ name: 'bug', color: 'd73a4a' }, { name: 'invalid', color: 'bad-css' }, 'legacy'] }]);
   });
   const input = { page: 1, state: 'open' };
   const [blocked, open] = await Promise.allSettled([service('issues', { ...input, repo: 'blocked/demo' }), service('issues', { ...input, repo })]);
   assert.equal(blocked.reason.code, 'FORBIDDEN');
   assert.equal(open.value.items[0].number, 3);
+  assert.deepEqual(open.value.items[0].labels, [{ name: 'bug', color: 'd73a4a' }, { name: 'invalid' }, { name: 'legacy' }]);
 });
 
 test('a switched account blocks writes before any repository request', async () => {

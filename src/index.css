@@ -1,6 +1,8 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
+@source not '../dev';
+
 @custom-variant dark (&:is(.dark *));
 
 /* Adapted from shadcn/studio's neutral theme. See NOTICE. */
@@ -23,6 +25,15 @@
   --open-status: oklch(0.41 0.10 160);
   --closed-status: oklch(0.45 0.11 303);
   --warning: oklch(0.47 0.10 67);
+  --panel-header: color-mix(in oklab, var(--card) 74%, var(--background));
+  --panel-outline: color-mix(in oklab, var(--foreground) 12%, var(--card));
+  --row-surface: color-mix(in oklab, var(--card) 88%, var(--background));
+  --row-active: color-mix(in oklab, var(--primary) 8%, var(--card));
+  --row-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+  --cindy-action-bg: #e6ecff;
+  --cindy-action-hover: #d9e3ff;
+  --cindy-action-border: #b8c9f5;
+  --cindy-action-text: #23408e;
 }
 
 :root.dark {
@@ -41,6 +52,14 @@
   --open-status: oklch(0.80 0.11 161);
   --closed-status: oklch(0.80 0.11 305);
   --warning: oklch(0.83 0.12 77);
+  --panel-header: color-mix(in oklab, var(--foreground) 3%, var(--card));
+  --row-surface: color-mix(in oklab, var(--foreground) 3%, var(--card));
+  --row-active: color-mix(in oklab, var(--primary) 12%, var(--card));
+  --row-shadow: 0 1px 2px rgb(0 0 0 / 23%);
+  --cindy-action-bg: #29395e;
+  --cindy-action-hover: #334674;
+  --cindy-action-border: #4b5e8f;
+  --cindy-action-text: #e1eaff;
 }
 
 @theme inline {
@@ -76,29 +95,132 @@
   button:not(:disabled):not([aria-disabled='true']) { cursor: pointer; }
 }
 
-.workbench-mark {
-  color: var(--primary);
-  background: var(--accent);
+.workbench-account-icon { color: var(--muted-foreground); background: var(--panel-header); }
+.workbench-quota { background: var(--panel-header); border-color: var(--panel-outline); }
+
+.workbench-panel { border-color: var(--panel-outline); box-shadow: var(--row-shadow); }
+.workbench-panel-header { background: var(--panel-header); padding-block-end: 0.875rem; }
+.workbench-list-footer { padding-block: 0.625rem; background: var(--panel-header); }
+.workbench-scroll { scrollbar-width: thin; scrollbar-color: var(--panel-outline) transparent; }
+
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.875rem; }
+.workspace-list, .issue-metadata { container-type: inline-size; }
+.workbench-filters { grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); }
+.workbench-repository { grid-column: 1 / -1; }
+.workbench-filters [data-slot='select-value'] { min-width: 0; overflow: hidden; }
+.workbench-label-menu { min-width: min(13rem, calc(100vw - 2rem)); max-width: min(20rem, calc(100vw - 2rem)); }
+
+@media (max-width: 480px) {
+  .workbench-toolbar[data-connected='true'] { width: 100%; flex-wrap: nowrap; }
+  .workbench-toolbar[data-connected='true'] > button {
+    flex: 1 1 auto;
+    height: 2rem;
+    padding-inline: 0.5rem;
+    gap: 0.375rem;
+    font-size: 0.75rem;
+  }
+  .workbench-toolbar[data-connected='true'] > button svg { width: 0.875rem; height: 0.875rem; }
 }
 
-.workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.75rem; }
+@container (min-width: 445px) {
+  .workbench-filters { grid-template-columns: minmax(0, 1fr) minmax(5rem, 0.42fr) minmax(7rem, 0.62fr); }
+  .workbench-repository { grid-column: auto; }
+}
+
+@container (min-width: 510px) {
+  .issue-metadata-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 .workspace-detail, .workspace[data-detail-open='true'] .workspace-list { display: none; }
 .workspace[data-detail-open='true'] .workspace-detail { display: flex; }
 
 @media (min-width: 880px) {
-  .workspace { grid-template-columns: minmax(0, 0.94fr) minmax(0, 1.16fr); }
+  .workspace { grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr); }
   .workspace-detail { display: flex; }
   .workspace[data-detail-open='true'] .workspace-list { display: flex; }
   .workspace-back { display: none; }
 }
 
+.issue-row {
+  border: 1px solid var(--panel-outline);
+  border-radius: 0.5rem;
+  background: var(--row-surface);
+  box-shadow: var(--row-shadow);
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+.issue-row:hover:not([aria-disabled='true']) {
+  background: color-mix(in oklab, var(--primary) 5%, var(--row-surface));
+  border-color: color-mix(in oklab, var(--primary) 36%, var(--panel-outline));
+}
 .issue-row[aria-current='true'] {
-  background: var(--accent);
-  box-shadow: inset 2px 0 0 var(--primary);
+  border-color: color-mix(in oklab, var(--primary) 48%, var(--panel-outline));
+  background: var(--row-active);
+  box-shadow: inset 2px 0 var(--primary), var(--row-shadow);
+}
+.issue-row[aria-current='true']:hover { background: color-mix(in oklab, var(--primary) 4%, var(--row-active)); }
+.issue-row:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.issue-row-chevron { opacity: 0.48; transition: transform 140ms ease, opacity 140ms ease; }
+.issue-row:is(:hover, :focus-visible, [aria-current='true']) .issue-row-chevron { opacity: 1; transform: translateX(2px); }
+.issue-row-state { color: var(--issue-state-color); background: color-mix(in oklab, var(--issue-state-color) 13%, var(--row-surface)); }
+.issue-row[data-state='open'] { --issue-state-color: var(--open-status); }
+.issue-row[data-state='closed'] { --issue-state-color: var(--closed-status); }
+
+.issue-status-open { color: var(--open-status); }
+.issue-status-closed { color: var(--closed-status); }
+.issue-label-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  flex: none;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--issue-label-color) 82%, var(--foreground));
+}
+.issue-label {
+  color: var(--foreground);
+  border-color: color-mix(in oklab, var(--issue-label-color) 34%, var(--panel-outline));
+  background: color-mix(in oklab, var(--issue-label-color) 12%, var(--card));
+}
+button.issue-label:hover { background: color-mix(in oklab, var(--issue-label-color) 22%, var(--card)); }
+.issue-assignee { color: var(--muted-foreground); background: var(--panel-header); }
+
+.cindy-action {
+  border: 1px solid var(--cindy-action-border);
+  background: var(--cindy-action-bg);
+  color: var(--cindy-action-text);
+}
+.cindy-action:hover { background: var(--cindy-action-hover); }
+.cindy-action[data-sent='true'] {
+  opacity: 1;
+  color: var(--open-status);
+  border-color: var(--panel-outline);
+  background: var(--panel-header);
 }
 
-.issue-dot[data-state='open'], .issue-status-open { color: var(--open-status); }
-.issue-dot[data-state='closed'], .issue-status-closed { color: var(--closed-status); }
+.issue-description { background: var(--row-surface); border-color: var(--panel-outline); }
+.issue-description .issue-markdown { line-height: 1.8; }
+.issue-metadata-card { background: var(--row-surface); border-color: var(--panel-outline); }
+.issue-comment-header, .issue-comment-footer { background: var(--panel-header); padding-block-end: 0.5rem; }
+.issue-comment-card, .issue-comment-composer { border-color: var(--panel-outline); }
+.issue-comment-composer { transition: outline-color 140ms ease; }
+.issue-comment-composer:focus-within { outline: 1px solid var(--ring); }
+
+.issue-markdown > * + * { margin-block-start: 0.75rem; }
+.issue-markdown :is(h1, h2, h3, h4, h5, h6) { font-weight: 650; line-height: 1.35; }
+.issue-markdown :is(h1, h2) { font-size: 1.125rem; }
+.issue-markdown p { white-space: pre-line; }
+.issue-markdown a { color: var(--primary); text-decoration: underline; text-underline-offset: 0.15em; }
+.issue-markdown ul { list-style-type: disc; padding-inline-start: 1.5rem; }
+.issue-markdown ol { list-style-type: decimal; padding-inline-start: 1.5rem; }
+.issue-markdown li + li { margin-block-start: 0.25rem; }
+.issue-markdown .task-list-item { list-style-type: none; }
+.issue-markdown input[type='checkbox'] { margin-inline-end: 0.25rem; accent-color: var(--primary); }
+.issue-markdown blockquote { border-inline-start: 3px solid var(--border); padding-inline-start: 0.75rem; color: var(--muted-foreground); }
+.issue-markdown pre { overflow-x: auto; border-radius: var(--radius); background: var(--muted); padding: 0.75rem; }
+.issue-markdown code { font-size: 0.875em; }
+.issue-markdown :not(pre) > code { border-radius: 0.25rem; background: var(--muted); padding: 0.1em 0.3em; }
+.issue-markdown img { display: inline-block; max-width: 100%; height: auto; border-radius: var(--radius); }
+.issue-markdown-table { overflow-x: auto; }
+.issue-markdown :is(th, td) { min-width: 4rem; border: 1px solid var(--border); padding: 0.375rem 0.625rem; }
+.issue-markdown th { background: var(--muted); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }

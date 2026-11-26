@@ -5,7 +5,7 @@ const { createApi, createService, GitHubError } = require('./github.cjs');
 
 const api = createApi();
 const dispatch = createService(api);
-const ACTIONS = new Set(['account', 'quota', 'repositories', 'issues', 'issue', 'comments', 'create',
+const ACTIONS = new Set(['account', 'quota', 'repositories', 'labels', 'issues', 'issue', 'comments', 'create',
   'comment', 'state', 'addLabels', 'removeLabel', 'addAssignees', 'removeAssignees']);
 
 function reply(id, result) {

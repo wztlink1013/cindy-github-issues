@@ -215,7 +215,9 @@ function repository(item) {
 }
 
 function label(item) {
-  return { name: clip(typeof item === 'string' ? item : item?.name, 100) };
+  const name = clip(typeof item === 'string' ? item : item?.name, 100);
+  const color = item?.color;
+  return typeof color === 'string' && /^[0-9a-f]{6}$/i.test(color) ? { name, color } : { name };
 }
 
 function isIssue(item) {
@@ -295,9 +297,21 @@ function createService(api = createApi()) {
     const [owner, repo, extra] = typeof args.repo === 'string' ? args.repo.split('/') : [];
     rejectUnless(OWNER.test(owner || '') && REPO.test(repo || '') && extra === undefined);
     const base = '/repos/' + owner + '/' + repo + '/issues';
+    if (action === 'labels') {
+      await assertAccount(args.accountId);
+      const result = await api(pagePath('/repos/' + owner + '/' + repo + '/labels', args.page, {}, 100));
+      await assertAccount(args.accountId);
+      return pageResult(result, label, item => typeof item?.name === 'string' && Boolean(item.name));
+    }
     if (action === 'issues') {
       rejectUnless(['open', 'closed', 'all'].includes(args.state));
-      return pageResult(await api(pagePath(base, args.page, { state: args.state, sort: 'updated', direction: 'desc' })), issueSummary, isIssue);
+      const params = { state: args.state, sort: 'updated', direction: 'desc' };
+      if (args.label !== undefined) {
+        const [name] = listText([args.label], 100);
+        // GitHub treats commas as separators. For those names the UI filters each loaded page exactly.
+        if (!name.includes(',')) params.labels = name;
+      }
+      return pageResult(await api(pagePath(base, args.page, params)), issueSummary, isIssue);
     }
     if (action === 'create') {
       const title = bodyText(args.title, 256).trim();

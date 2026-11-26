@@ -1,6 +1,9 @@
+export const isBrowserPreview = ['http:', 'https:'].includes(window.location.protocol)
+
 export type IssueState = 'open' | 'closed'
 export type StateFilter = IssueState | 'all'
 export type Account = { id: number; login: string }
+export type IssueLabel = { name: string; color?: string }
 export type Repository = {
   name: string
   owner: string
@@ -17,7 +20,7 @@ export type Issue = {
   updated: string
   author: string
   comments: number
-  labels: { name: string }[]
+  labels: IssueLabel[]
   assignees: string[]
 }
 export type FullIssue = Issue & { body: string; locked: boolean; warning?: string }
@@ -29,6 +32,7 @@ export type Quota = {
   cooldown: { kind: 'primary' | 'secondary'; until: number } | null
 }
 export type IssueTarget = { repo: string; number: number; accountId: number }
+export type CindyTask = { taskId: string; title: string; preview?: true }
 export type IssueMutation =
   | { action: 'comment'; args: { body: string } }
   | { action: 'state'; args: { state: IssueState } }
@@ -39,9 +43,11 @@ type Actions = {
   account: [Record<string, never>, Account]
   quota: [{ accountId: number }, null]
   repositories: [{ accountId: number; page: number }, Page<Repository>]
-  issues: [{ repo: string; page: number; state: StateFilter }, Page<Issue>]
+  labels: [{ repo: string; accountId: number; page: number }, Page<IssueLabel>]
+  issues: [{ repo: string; page: number; state: StateFilter; label?: string }, Page<Issue>]
   issue: [Pick<IssueTarget, 'repo' | 'number'>, FullIssue]
   comments: [IssueTarget & { page: number }, Page<IssueComment>]
+  handOffIssue: [IssueTarget, CindyTask]
   create: [{ repo: string; accountId: number; title: string; body: string }, FullIssue]
   comment: [IssueTarget & { body: string }, IssueComment]
   state: [IssueTarget & { state: IssueState }, FullIssue]
@@ -104,10 +110,13 @@ export function createGitHubClient(onQuota: (snapshot: Quota | null) => void) {
 
   async function request<K extends keyof Actions>(action: K, args: Actions[K][0]): Promise<Actions[K][1]> {
     const until = quota?.cooldown?.until ?? 0
-    if (until > Date.now()) throw new GitHubError('RATE_LIMIT', 'GitHub 当前限流，请在 ' + formatTime(until) + ' 后重试。')
+    if (action !== 'handOffIssue' && until > Date.now()) throw new GitHubError('RATE_LIMIT', 'GitHub 当前限流，请在 ' + formatTime(until) + ' 后重试。')
     const context = generation
     const wake = await fetch('/wake').catch(() => null)
     if (context !== generation) throw new GitHubError('CANCELLED', '页面已切换。')
+    if (isBrowserPreview && (!wake?.ok || wake.headers.get('X-Cindy-Preview') !== 'github-issues')) {
+      throw new GitHubError('PREVIEW_UNAVAILABLE', '无法连接 Vite 开发服务器的模拟接口。')
+    }
     if (!wake?.ok) throw new GitHubError('BRIDGE', '无法唤醒插件，请重新检测。')
     const connection = getChannel()
     const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
@@ -116,10 +125,12 @@ export function createGitHubClient(onQuota: (snapshot: Quota | null) => void) {
       const retry = window.setInterval(() => connection.postMessage(message), 450)
       const timeout = window.setTimeout(() => {
         finish()
-        reject(mutations.has(action)
+        reject(action === 'handOffIssue'
+          ? new GitHubError('CINDY_TASK_CHECK', '暂时无法确认派发结果，请先查看 Cindy 任务列表。')
+          : mutations.has(action)
           ? new GitHubError('WRITE_UNCERTAIN', '无法确认 GitHub 是否已保存。请先核对结果，再决定是否重试。')
           : new GitHubError('TIMEOUT', 'GitHub 后台响应超时，请重试。'))
-      }, action === 'state' ? 177000 : 88000)
+      }, action === 'state' || action === 'handOffIssue' ? 177000 : 88000)
 
       function stopRetry() { window.clearInterval(retry) }
       function finish() {
@@ -183,7 +194,13 @@ export function createGitHubClient(onQuota: (snapshot: Quota | null) => void) {
 export type GitHubClient = ReturnType<typeof createGitHubClient>
 export type Reporter = (error: unknown) => boolean
 
-type Settings = { accounts?: Record<string, { repositories?: Repository[] }> }
+export type RepositorySelection = { repositories: Repository[]; defaultRepository: string }
+type Settings = { accounts?: Record<string, Partial<RepositorySelection>> }
+
+export function getDefaultRepository(repositories: Repository[], preferred?: string) {
+  const name = typeof preferred === 'string' ? preferred.toLowerCase() : ''
+  return repositories.find(repo => repo.name.toLowerCase() === name)?.name ?? repositories[0]?.name ?? ''
+}
 
 async function readSettings(): Promise<Settings> {
   const response = await fetch('/kv')
@@ -192,14 +209,17 @@ async function readSettings(): Promise<Settings> {
 }
 
 export async function readRepositories(account: Account) {
-  const rows = (await readSettings()).accounts?.[String(account.id)]?.repositories
-  return Array.isArray(rows) ? rows.filter(repo => typeof repo?.name === 'string' && repoPattern.test(repo.name)) : []
+  const saved = (await readSettings()).accounts?.[String(account.id)]
+  const repositories = Array.isArray(saved?.repositories)
+    ? saved.repositories.filter(repo => typeof repo?.name === 'string' && repoPattern.test(repo.name)) : []
+  return { repositories, defaultRepository: getDefaultRepository(repositories, saved?.defaultRepository) }
 }
 
-export async function saveRepositories(client: GitHubClient, account: Account, repositories: Repository[]) {
+export async function saveRepositories(client: GitHubClient, account: Account, selection: RepositorySelection) {
   await client.assertAccount(account.id)
   const settings = await readSettings()
-  const accounts = { ...settings.accounts, [String(account.id)]: { repositories } }
-  const response = await fetch('/kv', { method: 'PUT', body: JSON.stringify({ accounts }) })
+  const id = String(account.id)
+  const accounts = { ...settings.accounts, [id]: { ...settings.accounts?.[id], ...selection } }
+  const response = await fetch('/kv', { method: 'PUT', body: JSON.stringify({ ...settings, accounts }) })
   if (!response.ok) throw new Error(response.status === 413 ? '仓库选择超过保存上限，请减少选择。' : '无法保存仓库选择。')
 }

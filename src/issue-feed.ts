@@ -12,12 +12,12 @@ type RepoPage = {
 }
 type Feed = { pages: Map<string, RepoPage>; busy: boolean; error: string }
 
-function applyIssue(items: Map<number, Issue>, issue: Issue, state: StateFilter) {
-  if (state === 'all' || state === issue.state) items.set(issue.number, issue)
+function applyIssue(items: Map<number, Issue>, issue: Issue, state: StateFilter, label: string) {
+  if ((state === 'all' || state === issue.state) && matchesLabel(issue, label)) items.set(issue.number, issue)
   else items.delete(issue.number)
 }
 
-export function useIssueFeed(client: GitHubClient, accountId: number | null, repositories: Repository[], repoFilter: string, state: StateFilter, report: Reporter) {
+export function useIssueFeed(client: GitHubClient, accountId: number | null, repositories: Repository[], state: StateFilter, label: string, report: Reporter) {
   const current = useRef<Feed | null>(null)
   const [view, setView] = useState({ items: [] as IssueRow[], errors: [] as [string, string][], hasNext: false, busy: false, error: '' })
 
@@ -46,10 +46,10 @@ export function useIssueFeed(client: GitHubClient, accountId: number | null, rep
           const pendingEdits = new Map<number, Issue>()
           page.pendingEdits = pendingEdits
           try {
-            const result = await client.request('issues', { repo: page.repo, page: page.next, state })
+            const result = await client.request('issues', { repo: page.repo, page: page.next, state, label: label || undefined })
             if (feed !== current.current) return
-            for (const issue of result.items) page.items.set(issue.number, issue)
-            for (const issue of pendingEdits.values()) applyIssue(page.items, issue, state)
+            for (const issue of result.items) applyIssue(page.items, issue, state, label)
+            for (const issue of pendingEdits.values()) applyIssue(page.items, issue, state, label)
             // GitHub may have moved an edited issue between pages while this page was in flight.
             page.next = pendingEdits.size ? 1 : page.next + 1
             page.hasNext = pendingEdits.size > 0 || result.hasNext
@@ -72,19 +72,19 @@ export function useIssueFeed(client: GitHubClient, accountId: number | null, rep
       feed.busy = false
       publish(feed)
     }
-  }, [accountId, client, publish, report, state])
+  }, [accountId, client, label, publish, report, state])
 
   useEffect(() => {
     const feed: Feed = { pages: new Map(), busy: false, error: '' }
     for (const repo of repositories) {
       const key = repo.name.toLowerCase()
-      if (!repoFilter || repoFilter === key) feed.pages.set(key, { repo: repo.name, items: new Map(), next: 1, hasNext: true, error: '' })
+      feed.pages.set(key, { repo: repo.name, items: new Map(), next: 1, hasNext: true, error: '' })
     }
     current.current = feed
     publish(feed)
     void load(feed)
     return () => { current.current = null }
-  }, [load, publish, repoFilter, repositories])
+  }, [load, publish, repositories])
 
   return {
     ...view,
@@ -93,18 +93,18 @@ export function useIssueFeed(client: GitHubClient, accountId: number | null, rep
       const feed = current.current
       const page = feed?.pages.get(repo.toLowerCase())
       if (!feed || !page) return
-      applyIssue(page.items, issue, state)
+      applyIssue(page.items, issue, state, label)
       page.pendingEdits?.set(issue.number, issue)
       publish(feed)
     },
   }
 }
 
-export function filterIssues(rows: IssueRow[], title: string, label: string, assignee: string) {
+function matchesLabel(issue: Issue, label: string) {
+  return !label || issue.labels.some(item => item.name.toLowerCase() === label.toLowerCase())
+}
+
+export function filterIssues(rows: IssueRow[], title: string) {
   const query = title.trim().toLowerCase()
-  const tag = label.trim().toLowerCase()
-  const login = assignee.trim().toLowerCase().replace(/^@/, '')
-  return rows.filter(issue => (!query || issue.title.toLowerCase().includes(query) || String(issue.number) === query.replace(/^#/, ''))
-    && (!tag || issue.labels.some(item => item.name.toLowerCase().includes(tag)))
-    && (!login || issue.assignees.some(name => name.toLowerCase().includes(login))))
+  return rows.filter(issue => !query || issue.title.toLowerCase().includes(query) || String(issue.number) === query.replace(/^#/, ''))
 }

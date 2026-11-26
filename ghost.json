@@ -4,8 +4,8 @@
   "id": "cindy-github-issues",
   "name": "GitHub Issues",
   "description": "Manage issues across your GitHub repositories using your local GitHub CLI session.",
-  "version": "0.2.0",
-  "releaseNotes": "更新 GitHub Issues 工作台，采用 shadcn/ui 组件，优化仓库选择、列表与详情布局、窄窗导航和评论草稿。",
+  "version": "0.3.0",
+  "releaseNotes": "Issue 正文与评论支持 GitHub 风格的 Markdown，标签使用 GitHub 配置的颜色。支持为各账号设置默认仓库，仓库标签在展开筛选时按页加载并缓存。更新列表卡片、详情、评论和窄屏布局，加载更多固定在列表底部。详情页可将 Issue 交给 Cindy 创建分析任务。",
   "entry": "main.js",
   "launch": "on-demand",
   "mainView": {
@@ -20,6 +20,7 @@
     "zh-CN": "README.zh-CN.md"
   },
   "confirm": true,
+  "agent": { "tasks": true },
   "node": {
     "entry": "node/worker.cjs",
     "protocol": "json-rpc-stdio",
