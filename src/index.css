@@ -1,0 +1,105 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* Adapted from shadcn/studio's neutral theme. See NOTICE. */
+:root {
+  --radius: 0.625rem;
+  --background: var(--panel-bg, oklch(0.98 0 0));
+  --foreground: var(--text-primary, oklch(0.145 0 0));
+  --card: var(--surface, oklch(1 0 0));
+  --popover: var(--card);
+  --primary: oklch(0.39 0.082 188);
+  --primary-foreground: oklch(0.98 0.01 186);
+  --secondary: oklch(0.96 0.004 200);
+  --muted: var(--secondary);
+  --muted-foreground: var(--text-secondary, oklch(0.46 0 0));
+  --accent: oklch(0.95 0.022 186);
+  --destructive: oklch(0.51 0.20 27);
+  --border: var(--border-default, oklch(0.922 0 0));
+  --input: var(--border);
+  --ring: oklch(0.57 0.10 188);
+  --open-status: oklch(0.41 0.10 160);
+  --closed-status: oklch(0.45 0.11 303);
+  --warning: oklch(0.47 0.10 67);
+}
+
+:root.dark {
+  --background: var(--panel-bg, oklch(0.145 0 0));
+  --foreground: var(--text-primary, oklch(0.985 0 0));
+  --card: var(--surface, oklch(0.20 0 0));
+  --primary: oklch(0.79 0.105 184);
+  --primary-foreground: oklch(0.20 0.035 188);
+  --secondary: oklch(0.269 0 0);
+  --muted-foreground: var(--text-secondary, oklch(0.73 0 0));
+  --accent: oklch(0.29 0.042 191);
+  --destructive: oklch(0.74 0.16 22);
+  --border: var(--border-default, oklch(1 0 0 / 12%));
+  --input: var(--border);
+  --ring: oklch(0.70 0.095 186);
+  --open-status: oklch(0.80 0.11 161);
+  --closed-status: oklch(0.80 0.11 305);
+  --warning: oklch(0.83 0.12 77);
+}
+
+@theme inline {
+  --font-sans: 'Geist Variable', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-warning: var(--warning);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  body { @apply m-0 bg-background font-sans text-foreground antialiased; }
+  button:not(:disabled):not([aria-disabled='true']) { cursor: pointer; }
+}
+
+.workbench-mark {
+  color: var(--primary);
+  background: var(--accent);
+}
+
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.75rem; }
+.workspace-detail, .workspace[data-detail-open='true'] .workspace-list { display: none; }
+.workspace[data-detail-open='true'] .workspace-detail { display: flex; }
+
+@media (min-width: 880px) {
+  .workspace { grid-template-columns: minmax(0, 0.94fr) minmax(0, 1.16fr); }
+  .workspace-detail { display: flex; }
+  .workspace[data-detail-open='true'] .workspace-list { display: flex; }
+  .workspace-back { display: none; }
+}
+
+.issue-row[aria-current='true'] {
+  background: var(--accent);
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+
+.issue-dot[data-state='open'], .issue-status-open { color: var(--open-status); }
+.issue-dot[data-state='closed'], .issue-status-closed { color: var(--closed-status); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

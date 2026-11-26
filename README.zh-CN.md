@@ -22,6 +22,6 @@
 
 ## 开发
 
-使用 Node.js 22 运行 `node --test`。使用 Cindy Forge 校验并打包源码目录。
+使用 Node.js 22.12 或更高版本，依次运行 `npm ci`、`npm test` 和 `npm run build`。主视图和设置页构建到 `dist/` 后，用 Cindy Forge 打包项目。前端使用 Vite、React、TypeScript、官方 shadcn/ui 组件和适配过的 shadcn/studio 主题。
 
 源码采用 [Apache 2.0](LICENSE) 协议。这是独立开发的插件。

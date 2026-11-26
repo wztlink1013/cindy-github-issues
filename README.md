@@ -26,6 +26,6 @@ The workspace reuses a fully loaded repository list for five minutes. The reposi
 
 ## Development
 
-Run `node --test` with Node.js 22. Use Cindy Forge to validate and package this source folder. The desktop UI labels are in Simplified Chinese.
+Use Node.js 22.12 or newer. Run `npm ci`, `npm test`, and `npm run build`. The build creates both plugin pages in `dist/`. Package the built project with Cindy Forge. The UI uses Vite, React, TypeScript, official shadcn/ui components, and an adapted shadcn/studio theme.
 
 Licensed under [Apache 2.0](LICENSE). This is an independent project.
