@@ -32,7 +32,6 @@ export type Quota = {
   cooldown: { kind: 'primary' | 'secondary'; until: number } | null
 }
 export type IssueTarget = { repo: string; number: number; accountId: number }
-export type CindyTask = { taskId: string; title: string; preview?: true }
 export type IssueMutation =
   | { action: 'comment'; args: { body: string } }
   | { action: 'state'; args: { state: IssueState } }
@@ -47,7 +46,6 @@ type Actions = {
   issues: [{ repo: string; page: number; state: StateFilter; label?: string }, Page<Issue>]
   issue: [Pick<IssueTarget, 'repo' | 'number'>, FullIssue]
   comments: [IssueTarget & { page: number }, Page<IssueComment>]
-  handOffIssue: [IssueTarget, CindyTask]
   create: [{ repo: string; accountId: number; title: string; body: string }, FullIssue]
   comment: [IssueTarget & { body: string }, IssueComment]
   state: [IssueTarget & { state: IssueState }, FullIssue]
@@ -110,7 +108,7 @@ export function createGitHubClient(onQuota: (snapshot: Quota | null) => void) {
 
   async function request<K extends keyof Actions>(action: K, args: Actions[K][0]): Promise<Actions[K][1]> {
     const until = quota?.cooldown?.until ?? 0
-    if (action !== 'handOffIssue' && until > Date.now()) throw new GitHubError('RATE_LIMIT', 'GitHub 当前限流，请在 ' + formatTime(until) + ' 后重试。')
+    if (until > Date.now()) throw new GitHubError('RATE_LIMIT', 'GitHub 当前限流，请在 ' + formatTime(until) + ' 后重试。')
     const context = generation
     const wake = await fetch('/wake').catch(() => null)
     if (context !== generation) throw new GitHubError('CANCELLED', '页面已切换。')
@@ -125,12 +123,10 @@ export function createGitHubClient(onQuota: (snapshot: Quota | null) => void) {
       const retry = window.setInterval(() => connection.postMessage(message), 450)
       const timeout = window.setTimeout(() => {
         finish()
-        reject(action === 'handOffIssue'
-          ? new GitHubError('CINDY_TASK_CHECK', '暂时无法确认派发结果，请先查看 Cindy 任务列表。')
-          : mutations.has(action)
+        reject(mutations.has(action)
           ? new GitHubError('WRITE_UNCERTAIN', '无法确认 GitHub 是否已保存。请先核对结果，再决定是否重试。')
           : new GitHubError('TIMEOUT', 'GitHub 后台响应超时，请重试。'))
-      }, action === 'state' || action === 'handOffIssue' ? 177000 : 88000)
+      }, action === 'state' ? 177000 : 88000)
 
       function stopRetry() { window.clearInterval(retry) }
       function finish() {
