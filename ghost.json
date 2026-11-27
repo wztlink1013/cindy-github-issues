@@ -4,8 +4,8 @@
   "id": "cindy-github-issues",
   "name": "GitHub Issues",
   "description": "Manage issues across your GitHub repositories using your local GitHub CLI session.",
-  "version": "0.3.1",
-  "releaseNotes": "Issue 详情页支持复制分析草稿，包含 Issue 链接和只读分析提示。粘贴到任意 Cindy 对话后可编辑并手动发送。剪贴板不可用时可在弹窗中手动复制。",
+  "version": "0.3.2",
+  "releaseNotes": "Issue 详情页同时提供交给 Cindy 和复制分析草稿。交给 Cindy 会在确认后派发分析任务。复制分析草稿可将 Issue 链接和只读分析提示粘贴到任意对话，由用户编辑后手动发送。",
   "entry": "main.js",
   "launch": "on-demand",
   "mainView": {
@@ -20,6 +20,7 @@
     "zh-CN": "README.zh-CN.md"
   },
   "confirm": true,
+  "agent": { "tasks": true },
   "node": {
     "entry": "node/worker.cjs",
     "protocol": "json-rpc-stdio",

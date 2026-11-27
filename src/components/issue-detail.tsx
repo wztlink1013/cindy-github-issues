@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
-import { ArrowLeft, ChevronDown, CircleCheck, CircleDot, Copy, ExternalLink, LoaderCircle, MessageSquare, Plus, RefreshCw, Tag, UserRound, X } from 'lucide-react'
+import { ArrowLeft, ChevronDown, CircleCheck, CircleDot, Copy, ExternalLink, LoaderCircle, MessageSquare, Plus, RefreshCw, Send, Tag, UserRound, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -12,7 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { IssueLabelBadge, IssueLabelDot, issueLabelStyle } from '@/components/issue-label'
 import { IssueMarkdown } from '@/components/issue-markdown'
-import { errorMessage, formatTime, hasErrorCode, issueUrl, type Account, type FullIssue, type GitHubClient, type IssueComment, type IssueLabel, type IssueMutation, type IssueState, type Reporter, type Repository } from '@/github'
+import { errorMessage, formatTime, hasErrorCode, issueUrl, type Account, type CindyTask, type FullIssue, type GitHubClient, type IssueComment, type IssueLabel, type IssueMutation, type IssueState, type Reporter, type Repository } from '@/github'
 
 function IssueStatus({ state }: { state: IssueState }) {
   return state === 'open'
@@ -82,6 +82,9 @@ export function IssueDetail({ client, account, repo, number, knownIssue, writing
   const [writeError, setWriteError] = useState('')
   const [writeStatus, setWriteStatus] = useState('')
   const [submittingComment, setSubmittingComment] = useState(false)
+  const [handingOff, setHandingOff] = useState(false)
+  const [cindyTask, setCindyTask] = useState<CindyTask | null>(null)
+  const [cindyError, setCindyError] = useState('')
   const [manualCopyText, setManualCopyText] = useState('')
   const mounted = useRef(true)
   const nextCommentPage = useRef(1)
@@ -206,6 +209,21 @@ export function IssueDetail({ client, account, repo, number, knownIssue, writing
     if (draft.trim()) void edit({ action: 'comment', args: { body: draft } })
   }
 
+  async function handOff() {
+    if (!issue || cindyTask || !startWrite()) return
+    setHandingOff(true)
+    setCindyError('')
+    try {
+      const task = await client.request('handOffIssue', target)
+      if (mounted.current) setCindyTask(task)
+    } catch (cause) {
+      if (mounted.current && !hasErrorCode(cause, 'CANCELLED')) setCindyError(errorMessage(cause))
+    } finally {
+      if (mounted.current) setHandingOff(false)
+      finishWrite()
+    }
+  }
+
   async function copyAnalysisDraft() {
     const prompt = [
       '请只读查看这个 GitHub Issue 的正文和讨论，概括问题、梳理验收条件，并给出处理建议。',
@@ -238,9 +256,16 @@ export function IssueDetail({ client, account, repo, number, knownIssue, writing
         </h2>
         {issue && <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"><span className="font-medium text-foreground">@{issue.author}</span><time dateTime={issue.updated}>更新于 {formatTime(issue.updated)}</time></p>}
         <div className="flex flex-wrap gap-2 pt-1">
-          {issue && <Button ref={copyButton} type="button" variant="secondary" size="sm" className="cindy-action" onClick={() => void copyAnalysisDraft()}>
-            <Copy />复制分析草稿
-          </Button>}
+          {issue && <>
+            <Button type="button" variant="secondary" size="sm" className="cindy-action" data-sent={Boolean(cindyTask)}
+              disabled={writing || Boolean(cindyTask)} onClick={() => void handOff()}>
+              {handingOff ? <LoaderCircle className="animate-spin" /> : cindyTask ? <CircleCheck /> : <Send />}
+              {cindyTask ? '已交给 Cindy' : '交给 Cindy'}
+            </Button>
+            <Button ref={copyButton} type="button" variant="outline" size="sm" onClick={() => void copyAnalysisDraft()}>
+              <Copy />复制分析草稿
+            </Button>
+          </>}
           <Button asChild variant="outline" size="sm"><a href={url} target="_blank" rel="noreferrer"><ExternalLink />在 GitHub 打开</a></Button>
           <Button type="button" variant="outline" size="sm" disabled={loading || writing} onClick={() => void refresh()}>
             <RefreshCw className={loading ? 'animate-spin' : undefined} />刷新详情
@@ -250,6 +275,10 @@ export function IssueDetail({ client, account, repo, number, knownIssue, writing
             {issue.state === 'open' ? <CircleCheck /> : <CircleDot />}{issue.state === 'open' ? '关闭 Issue' : '重开 Issue'}
           </Button>}
         </div>
+        {cindyTask && <p role="status" className="text-xs text-muted-foreground wrap-anywhere">
+          {cindyTask.preview ? '预览已收到任务回执。' : '已派发，可在 Cindy 任务列表查看「' + cindyTask.title + '」。'}
+        </p>}
+        {cindyError && <Alert variant="destructive"><AlertDescription>{cindyError}</AlertDescription></Alert>}
       </CardHeader>
       <Dialog open={Boolean(manualCopyText)} onOpenChange={open => { if (!open) setManualCopyText('') }}>
         <DialogContent onCloseAutoFocus={event => {

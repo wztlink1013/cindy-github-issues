@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { Plugin } from 'vite'
-import type { Account, FullIssue, IssueComment, IssueLabel, Page, Quota, Repository } from '../src/github'
+import type { Account, CindyTask, FullIssue, IssueComment, IssueLabel, Page, Quota, Repository } from '../src/github'
 
 const account: Account = { id: 42, login: 'preview-user' }
 const repositories: Repository[] = [
@@ -109,6 +109,10 @@ function createMockHost() {
     const issue = list.find(item => item.number === args.number)
     if (!issue) return failure('NOT_FOUND', '找不到预览 Issue。')
     if (action === 'issue') return ok(withoutThread(issue))
+    if (action === 'handOffIssue' && args.accountId === account.id) {
+      const task: CindyTask = { taskId: 'preview:' + repo.name + '#' + issue.number, title: repo.name + ' #' + issue.number, preview: true }
+      return ok(task)
+    }
     if (action === 'comments') {
       await delay(500)
       return ok(pageOf(issue.thread, args.page, 1))

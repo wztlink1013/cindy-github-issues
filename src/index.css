@@ -188,6 +188,12 @@ button.issue-label:hover { background: color-mix(in oklab, var(--issue-label-col
   color: var(--cindy-action-text);
 }
 .cindy-action:hover { background: var(--cindy-action-hover); }
+.cindy-action[data-sent='true'] {
+  opacity: 1;
+  color: var(--open-status);
+  border-color: var(--panel-outline);
+  background: var(--panel-header);
+}
 
 .issue-description { background: var(--row-surface); border-color: var(--panel-outline); }
 .issue-description .issue-markdown { line-height: 1.8; }

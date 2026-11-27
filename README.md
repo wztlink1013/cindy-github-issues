@@ -11,7 +11,7 @@ A desktop Cindy workspace for issues across GitHub.com repositories. It uses the
 3. Open **GitHub Issues** from the left navigation. Open **选择仓库**, check the repositories you want, mark one **设为默认** and save. The workspace starts in that repository.
 4. Filter issues by repository, state or label. The label menu reads the selected repositories' labels on demand. Title and issue-number searches cover loaded items. Use **加载更多 Issues** at the bottom of the list to fetch the next page.
 5. Open an issue to read its body and comments in Markdown, edit its labels or assignees, or close and reopen it. Use **新建 Issue** to create an issue in a selected repository.
-6. Select **复制分析草稿** (Copy analysis draft) to copy the issue link and a read-only analysis prompt. Paste it into a Cindy conversation of your choice, edit it, and send it when ready. If clipboard access is unavailable, copy the text from the dialog.
+6. Select **交给 Cindy** (Hand off to Cindy) and confirm to dispatch an analysis task. You can find it in Cindy's task list. Alternatively, select **复制分析草稿** (Copy analysis draft) to copy the issue link and a read-only analysis prompt, then paste it into a conversation, edit it, and send it when ready. If clipboard access is unavailable, copy the text from the dialog.
 
 Your repository selection and default are stored in Cindy per GitHub user ID on this device. Run `gh auth switch --hostname github.com` to switch accounts and use **重新检测** to refresh immediately. GitHub enforces repository permissions and organization SSO. Archived repositories are read-only. Long comments can be read in full on GitHub.
 
